@@ -1,2 +1,2 @@
-# LabSession-RUS-Project
-Demo codes for Razvoj umreženih sustava (Internet of Things Systems Development) @ FOI, 2022
+# Smart Classroom Occupancy Monitoring System
+System for monitoring classroom occupancy in real-time using IoT and Azure.
