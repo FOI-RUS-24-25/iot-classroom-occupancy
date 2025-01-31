@@ -139,13 +139,24 @@ void connectMQTT() {
     }
 }
 
+String getISO8601Timestamp() {
+    time_t now = time(NULL);
+    struct tm timeinfo;
+    gmtime_r(&now, &timeinfo);
+
+    char buffer[30];
+    strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+    return String(buffer);
+}
 
 
-String getTelemetryData() {
+String getTelemetryData(bool status) {
     StaticJsonDocument<128> doc;
-    String output = "";
+    String output;
 
-    doc["DeviceID"] = (String)deviceId;
+    doc["DeviceID"] = (String)deviceId;          // Jedinstveni identifikator uređaja
+    doc["Status"] = status;                      // True (zauzeto) ili False (slobodno)
+    doc["Timestamp"] = getISO8601Timestamp();    // Vrijeme promjene statusa
 
     serializeJson(doc, output);
     Logger.Info(output);
@@ -153,10 +164,10 @@ String getTelemetryData() {
 }
 
 
-void sendTelemetryData() {
-  String telemetryData = getTelemetryData();
-  mqttClient.publish(publishTopic, telemetryData.c_str());
+void sendTelemetryData(String telemetryData) {
+    mqttClient.publish(publishTopic, telemetryData.c_str());
 }
+
 
 long lastTime, currentTime = 0;
 unsigned long lastMotionTime = 0; 
@@ -167,67 +178,57 @@ unsigned long lastCheckTime = 0;             // Vrijeme zadnje provjere u loop()
 const unsigned long checkInterval = 100;     // Interval između provjera
 int motionCount = 0;                         // Brojač pokreta
 bool firstMessage = true;                    // Indikator za prvu poruku
+bool lastSentState = false; // Zadnje poslano stanje (false = slobodno, true = zauzeto)
 
-int interval = 5000;
-void checkTelemetry() { // Do not block using delay(), instead check if enough time has passed between two calls using millis() 
-  currentTime = millis();
 
-  if (currentTime - lastTime >= interval) { // Subtract the current elapsed time (since we started the device) from the last time we sent the telemetry, if the result is greater than the interval, send the data again
-    Logger.Info("Sending telemetry...");
-    sendTelemetryData();
-
-    lastTime = currentTime;
-  }
-}
 
 unsigned long lastInactiveTimeReported = 0; // Dodana varijabla za praćenje posljednje prijavljene sekunde
 
 unsigned long startTime = millis(); // Dodana varijabla za praćenje početnog vremena
 
 void checkPIRSensor() {
-  unsigned long currentTime = millis();
+    unsigned long currentTime = millis();
+    static bool isRoomOccupied = false; // Trenutni status zauzetosti
 
-  // Provjera svakih 100 ms
-  if (currentTime - lastCheckTime >= checkInterval) {
-    lastCheckTime = currentTime;
+    // Provjera svakih 100 ms
+    if (currentTime - lastCheckTime >= checkInterval) {
+        lastCheckTime = currentTime;
+        
+        int motionDetected = digitalRead(PIR_PIN);
 
-    int motionDetected = digitalRead(PIR_PIN);
+        // Ako je detektiran pokret i prostorija je bila slobodna
+        if (motionDetected == HIGH && !isRoomOccupied) {
+            isRoomOccupied = true; // Označi prostoriju kao zauzetu
+            lastMotionTime = currentTime; // Pohrani vrijeme zadnjeg pokreta
+            
+            digitalWrite(RED_PIN, HIGH); // Crvena LED = zauzeto
+            digitalWrite(GREEN_PIN, LOW);
 
-    // Ako je detektiran pokret
-    if (motionDetected == HIGH && (currentTime - lastDebounceTime > debounceDelay)) {
-      lastDebounceTime = currentTime; // Postavi vrijeme zadnje detekcije
-      firstMessage = false; // Nakon prvog pokreta, isključuje se početna poruka
+            if (!lastSentState) { // Pošalji samo ako zadnje poslano stanje nije bilo "zauzeto"
+                Logger.Info("Pokret detektiran! Slanje zauzetosti na IoT Hub.");
+                String telemetryData = getTelemetryData(true); // true = zauzeto
+                sendTelemetryData(telemetryData);
+                lastSentState = true; // Oznaka da je zadnje poslano stanje "zauzeto"
+            }
+        } 
+        // Ako nije bilo pokreta dulje od noMotionDelay i prostorija je zauzeta
+        else if (motionDetected == LOW && isRoomOccupied && (currentTime - lastMotionTime >= noMotionDelay)) {
+            isRoomOccupied = false; // Označi prostoriju kao slobodnu
+            
+            digitalWrite(RED_PIN, LOW);
+            digitalWrite(GREEN_PIN, HIGH); // Zelena LED = slobodno
 
-      digitalWrite(RED_PIN, HIGH);
-      digitalWrite(GREEN_PIN, LOW);
-      lastMotionTime = currentTime; // Ažuriraj vrijeme zadnjeg pokreta
-      lastInactiveTimeReported = 0; // Resetiraj prijavljeni broj sekundi
-      Logger.Info("Pokret detektiran! Resetiranje brojača neaktivnosti.");
-
-      // Pošalji podatke o pokretu na IoT Hub
-      sendTelemetryData();
-    } 
-    // Ako još nije bilo pokreta (brojanje od 0)
-    else if (firstMessage) {
-      unsigned long inactiveTime = (currentTime - startTime) / 1000; // Vrijeme od pokretanja uređaja u sekundama
-      if (inactiveTime != lastInactiveTimeReported) {
-        Logger.Info("Sekunde prije prvog pokreta: " + String(inactiveTime));
-        lastInactiveTimeReported = inactiveTime; // Ažuriraj zadnji prijavljeni broj sekundi
-      }
+            if (lastSentState) { // Pošalji samo ako zadnje poslano stanje nije već bilo "slobodno"
+                Logger.Info("Nema pokreta dulje od 10 sekundi. Prostorija sada slobodna.");
+                String telemetryData = getTelemetryData(false); // false = slobodno
+                sendTelemetryData(telemetryData);
+                lastSentState = false; // Oznaka da je zadnje poslano stanje "slobodno"
+            }
+        }
     }
-    // Ako nije bilo pokreta više od 10 sekundi
-    else if (currentTime - lastMotionTime >= noMotionDelay) {
-      unsigned long inactiveTime = ((currentTime - lastMotionTime - noMotionDelay) / 1000) + 10; // Početak brojanja od 10
-      if (inactiveTime != lastInactiveTimeReported) {
-        Logger.Info("Sekunde bez pokreta: " + String(inactiveTime));
-        lastInactiveTimeReported = inactiveTime; // Ažuriraj zadnji prijavljeni broj sekundi
-      }
-
-      digitalWrite(RED_PIN, LOW);
-      digitalWrite(GREEN_PIN, HIGH);
-    }
-  }
 }
+
+
 
 
 
@@ -293,7 +294,6 @@ void setup() {
 void loop() {
     if (!mqttClient.connected()) connectMQTT();
     mqttClient.loop();
-    checkTelemetry();
     checkPIRSensor();
 }
 
