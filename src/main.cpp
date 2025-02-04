@@ -53,7 +53,7 @@ PubSubClient mqttClient(wifiClient);
 const char *ssid = "Desmond Benjamin";
 const char *pass = "forL14pass";
 
-const char *functionUrl = "https://rus-function-app.azurewebsites.net/api/send_telemetry?code=w2raiXo9zZ3A-a8y80mDsKMOpdgnpTtPuiZZdVo3S9UjAzFurEJFxA%3D%3D";
+const char *functionUrl = "https://rus-function-app.azurewebsites.net/api/SendTelemetry?code=ZZKw5KOlDTcaN_yXrmcFp0AWwRWKECGWDs-14STXmmn8AzFuqi-3Tg%3D%3D";
 
 void setupWiFi()
 {
@@ -149,16 +149,18 @@ String getISO8601Timestamp()
 {
   time_t now = time(NULL);
   struct tm timeinfo;
-  gmtime_r(&now, &timeinfo);
+
+  now += 3600;
+  localtime_r(&now, &timeinfo);
 
   char buffer[30];
-  strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+  strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &timeinfo); // ISO 8601 format
   return String(buffer);
 }
 
 String getTelemetryData(bool status)
 {
-  StaticJsonDocument<128> doc;
+  StaticJsonDocument<256> doc;
   String output;
 
   doc["DeviceID"] = (String)deviceId;       // Jedinstveni identifikator uređaja
