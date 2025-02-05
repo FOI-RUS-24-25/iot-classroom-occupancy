@@ -11,10 +11,15 @@
 #include <HTTPClient.h>
 
 /* Azure auth data */
-char *deviceKey = "RAmJI0YX7duvqDP7vChVv6a2VaPoMuoflAIoTB7kQwM="; // Azure Primary key for device
-const char *iotHubHost = "foi-rus-lposta21.azure-devices.net";    //[Azure IoT host name].azure-devices.net
-const char *deviceId = "ESP32_WROVER";                            // Device ID as specified in the list of devices on IoT Hub
+// Device ID as specified in the list of devices on IoT Hub
 const int tokenDuration = 60;
+
+const char *ssid = WIFI_SSID;
+const char *pass = WIFI_PASS;
+const char *iotHubHost = AZURE_IOT_HUB;
+const char *deviceId = AZURE_DEVICE_ID;
+const char *functionUrl = "https://rus-function-app.azurewebsites.net/api/SendTelemetry?code=ZZKw5KOlDTcaN_yXrmcFp0AWwRWKECGWDs-14STXmmn8AzFuqi-3Tg%3D%3D";
+char *deviceKey = AZURE_DEVICE_KEY;
 
 /* MQTT data for IoT Hub connection */
 const char *mqttBroker = iotHubHost;                              // MQTT host = IoT Hub link
@@ -49,11 +54,6 @@ AzIoTSasToken sasToken(
 
 WiFiClientSecure wifiClient;
 PubSubClient mqttClient(wifiClient);
-
-const char *ssid = "Desmond Benjamin";
-const char *pass = "forL14pass";
-
-const char *functionUrl = "https://rus-function-app.azurewebsites.net/api/SendTelemetry?code=ZZKw5KOlDTcaN_yXrmcFp0AWwRWKECGWDs-14STXmmn8AzFuqi-3Tg%3D%3D";
 
 void setupWiFi()
 {
