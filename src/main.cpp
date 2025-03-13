@@ -8,18 +8,12 @@
 #include "WiFiClientSecure.h"
 #include "PubSubClient.h"
 #include "ArduinoJson.h"
+#include "secrets.h"
 #include <HTTPClient.h>
 
 /* Azure auth data */
 // Device ID as specified in the list of devices on IoT Hub
 const int tokenDuration = 60;
-
-const char *ssid = WIFI_SSID;
-const char *pass = WIFI_PASS;
-const char *iotHubHost = AZURE_IOT_HUB;
-const char *deviceId = AZURE_DEVICE_ID;
-const char *functionUrl = "https://rus-function-app.azurewebsites.net/api/SendTelemetry?code=ZZKw5KOlDTcaN_yXrmcFp0AWwRWKECGWDs-14STXmmn8AzFuqi-3Tg%3D%3D";
-char *deviceKey = AZURE_DEVICE_KEY;
 
 /* MQTT data for IoT Hub connection */
 const char *mqttBroker = iotHubHost;                              // MQTT host = IoT Hub link
@@ -118,17 +112,23 @@ void callback(char *topic, byte *payload, unsigned int length)
 
 void connectMQTT()
 {
-  mqttClient.setBufferSize(1024);
+  mqttClient.setBufferSize(2048); // Povećanje buffer-a za stabilnije slanje podataka
   mqttClient.setServer(mqttBroker, mqttPort);
   mqttClient.setCallback(callback);
 
-  while (!mqttClient.connected())
+  int attempt = 0;
+  const int maxAttempts = 5; // Ograničavamo broj pokušaja
+
+  while (!mqttClient.connected() && attempt < maxAttempts)
   {
-    Logger.Info("Attempting MQTT connection...");
+    Logger.Info("Attempting MQTT connection... (Attempt " + String(attempt + 1) + "/" + String(maxAttempts) + ")");
+
     if (sasToken.Generate(tokenDuration) != 0)
     {
       Logger.Error("Failed generating SAS token");
-      return;
+      delay(2000); // Kratka pauza prije ponovnog pokušaja
+      attempt++;
+      continue;
     }
 
     const char *mqttPassword = (const char *)az_span_ptr(sasToken.Get());
@@ -136,12 +136,20 @@ void connectMQTT()
     {
       Logger.Info("MQTT connected");
       mqttClient.subscribe(mqttC2DTopic);
+      break;
     }
     else
     {
-      Logger.Info("Trying again in 5 seconds");
+      Logger.Error("MQTT connection failed, retrying in 5 seconds...");
       delay(5000);
+      attempt++;
     }
+  }
+
+  if (!mqttClient.connected())
+  {
+    Logger.Error("MQTT connection failed after multiple attempts, restarting ESP32...");
+    ESP.restart(); // Resetiraj ESP ako ne uspije povezivanje
   }
 }
 
@@ -285,12 +293,12 @@ void sendTestMessageToIoTHub()
 
 bool initIoTHub()
 {
-  az_iot_hub_client_options options = az_iot_hub_client_options_default(); // Get a default instance of IoT Hub client options
+  az_iot_hub_client_options options = az_iot_hub_client_options_default();
 
-  if (az_result_failed(az_iot_hub_client_init( // Create an instnace of IoT Hub client for our IoT Hub's host and the current device
+  if (az_result_failed(az_iot_hub_client_init(
           &client,
-          az_span_create((unsigned char *)iotHubHost, strlen(iotHubHost)),
-          az_span_create((unsigned char *)deviceId, strlen(deviceId)),
+          az_span_create((uint8_t *)iotHubHost, strlen(iotHubHost)),
+          az_span_create((uint8_t *)deviceId, strlen(deviceId)),
           &options)))
   {
     Logger.Error("Failed initializing Azure IoT Hub client");
@@ -299,21 +307,21 @@ bool initIoTHub()
 
   size_t client_id_length;
   if (az_result_failed(az_iot_hub_client_get_client_id(
-          &client, mqttClientId, sizeof(mqttClientId) - 1, &client_id_length))) // Get the actual client ID (not our internal ID) for the device
+          &client, mqttClientId, sizeof(mqttClientId) - 1, &client_id_length)))
   {
-    Logger.Error("Failed getting client id");
+    Logger.Error("Failed getting client ID");
     return false;
   }
 
   size_t mqttUsernameSize;
   if (az_result_failed(az_iot_hub_client_get_user_name(
-          &client, mqttUsername, sizeof(mqttUsername), &mqttUsernameSize))) // Get the MQTT username for our device
+          &client, mqttUsername, sizeof(mqttUsername), &mqttUsernameSize)))
   {
     Logger.Error("Failed to get MQTT username ");
     return false;
   }
 
-  Logger.Info("Great success");
+  Logger.Info("Successfully initialized Azure IoT Hub");
   Logger.Info("Client ID: " + String(mqttClientId));
   Logger.Info("Username: " + String(mqttUsername));
 
@@ -342,7 +350,12 @@ void setup()
 void loop()
 {
   if (!mqttClient.connected())
-    connectMQTT();
-  mqttClient.loop();
-  checkPIRSensor();
+  {
+    Logger.Error("MQTT connection failed after multiple attempts, waiting 1 min before retry...");
+    delay(60000);  // Pričekaj 60 sekundi prije ponovnog pokušaja
+    connectMQTT(); // Ponovni pokušaj povezivanja
+  }
+
+  mqttClient.loop(); // Drži MQTT vezu aktivnom
+  checkPIRSensor();  // Provjera PIR senzora
 }
