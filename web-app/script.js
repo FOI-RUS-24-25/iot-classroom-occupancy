@@ -8,7 +8,7 @@ async function fetchRoomStatus() {
         const occupancyDurationBox = document.getElementById("occupancy-duration");
 
         if (statusBox) {
-            if (data.Status === false) {
+            if (data.occupied) {
                 statusBox.innerHTML = 'Current status: <strong style="color: red;">Occupied</strong>';
                 statusBox.style.backgroundColor = "rgba(248, 215, 218, 1)";
                 statusBox.style.borderColor = "rgb(231, 130, 140)";

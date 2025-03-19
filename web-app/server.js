@@ -21,9 +21,18 @@ server.use(express.static(__dirname));
 server.get('/api/last-status', async (req, res) => {
     try {
         await sql.connect(dbConfig);
-        const result = await sql.query(`SELECT TOP 1 Status FROM Telemetry ORDER BY Timestamp DESC`);
-        res.json(result.recordset[0]);
+        const result = await sql.query(`SELECT TOP 1 Status FROM Telemetry ORDER BY ID DESC`);
+
+        console.log("DB Result:", result.recordset); // Log podataka iz baze
+        if (result.recordset.length > 0) {
+            const status = result.recordset[0].Status;
+            console.log("Latest Status Value:", status); // Log zadnjeg statusa
+            res.json({ occupied: status });
+        } else {
+            res.json({ occupied: null });
+        }
     } catch (error) {
+        console.error("Error fetching last status:", error);
         res.status(500).json({ error: 'Error fetching last status' });
     } finally {
         sql.close();
@@ -34,13 +43,15 @@ server.get('/api/last-occupied-time', async (req, res) => {
     try {
         await sql.connect(dbConfig);
         const result = await sql.query(`
-            SELECT CONVERT(VARCHAR, MAX(Timestamp), 126) AS LastOccupiedTimeUTC
-            FROM Telemetry 
-            WHERE Status = 0
+            SELECT TOP 1 CONVERT(VARCHAR, Timestamp, 126) AS LastOccupiedTimeUTC
+            FROM Telemetry
+            WHERE Status = 1
+            ORDER BY Timestamp DESC
         `);
-        
-        res.json({ lastOccupiedTime: result.recordset[0].LastOccupiedTimeUTC });
+
+        res.json({ lastOccupiedTime: result.recordset[0]?.LastOccupiedTimeUTC ?? null });
     } catch (error) {
+        console.error("Error fetching last occupied time:", error);
         res.status(500).json({ error: 'Error fetching last occupied time' });
     } finally {
         sql.close();
