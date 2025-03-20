@@ -12,6 +12,22 @@ This project implements a **real-time classroom occupancy monitoring system** us
 ✅ **REST API** to retrieve real-time and historical occupancy data  
 ✅ **Web dashboard** for occupancy analytics  
 
+## 🛠 Hardware Setup
+
+The system is built using an **ESP32 microcontroller**, a **PIR motion sensor**, and an **RGB LED** for visual indication.
+
+### 🔹 Components:
+- **ESP32 DevKit**
+- **PIR Motion Sensor**
+- **Common Anode RGB LED**
+- **330Ω Resistor (for LED)**
+- **Breadboard & Jumper Wires**
+
+### 🔹 Circuit Diagram:
+![ESP32 Prototype](https://github.com/user-attachments/assets/eb33962e-09be-4f08-80eb-be9e9d691615)
+
+> The ESP32 is connected to a **PIR motion sensor** to detect movement and an **RGB LED** to visually indicate room occupancy.
+
 ## 🛠 System Components
 
 - **ESP32** microcontroller
