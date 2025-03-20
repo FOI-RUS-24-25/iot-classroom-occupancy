@@ -116,17 +116,98 @@ CREATE TABLE Telemetry (
 );
 ```
 2. Ensure the **Azure SQL Firewall** allows connections
+#### ⚙️ **Azure Function - SendTelemetry**
 
-#### ⚙️ **Azure Function**
-1. Deploy **Azure Function App** using **C#/.NET**
-2. Function extracts IoT data and writes it to SQL:
-```csharp
-public static void Run([IoTHubTrigger("messages/events", Connection = "AzureIoTHubConnectionString")] string message, ILogger log)
-{
-    var data = JsonConvert.DeserializeObject<Telemetry>(message);
-    SaveToDatabase(data);
-}
-```
+1. **Deploy an Azure Function App** using **C#/.NET**.
+2. The function listens for **HTTP POST requests** and writes IoT telemetry data to **Azure SQL Database**.
+3. **Expected JSON payload format**:
+   ```json
+   {
+      "DeviceID": "ESP32-001",
+      "Status": true,
+      "Timestamp": "2024-03-20T14:30:00Z"
+   }
+   ```
+
+4. **C# Function Code (SendTelemetry.cs)**:
+   ```csharp
+   using System.IO;
+   using System.Data.SqlClient;
+   using Microsoft.AspNetCore.Http;
+   using Microsoft.AspNetCore.Mvc;
+   using Microsoft.Azure.Functions.Worker;
+   using Microsoft.Extensions.Logging;
+   using Newtonsoft.Json;
+
+   namespace Rus.Function
+   {
+       public class SendTelemetry
+       {
+           private readonly ILogger<SendTelemetry> _logger;
+
+           public SendTelemetry(ILogger<SendTelemetry> logger)
+           {
+               _logger = logger;
+           }
+
+           [Function("SendTelemetry")]
+           public IActionResult Run([HttpTrigger(AuthorizationLevel.Function, "post")] HttpRequest req)
+           {
+               _logger.LogInformation("Received telemetry data.");
+
+               // Read request body
+               string requestBody = new StreamReader(req.Body).ReadToEndAsync().Result;
+               dynamic data = JsonConvert.DeserializeObject(requestBody);
+
+               string deviceId = data?.DeviceID;
+               bool status = data?.Status ?? false;
+               DateTime? timestamp = data?.Timestamp;
+
+               // Validate payload
+               if (string.IsNullOrEmpty(deviceId) || timestamp == null)
+               {
+                   _logger.LogError("Invalid data: DeviceID or Timestamp is null.");
+                   return new BadRequestObjectResult("DeviceID or Timestamp is invalid.");
+               }
+
+               // Get SQL Connection String from environment variables
+               string connectionString = Environment.GetEnvironmentVariable("SQLConnectionString");
+               if (string.IsNullOrEmpty(connectionString))
+               {
+                   _logger.LogError("Database connection string is missing.");
+                   return new StatusCodeResult(500);
+               }
+
+               try
+               {
+                   using (SqlConnection conn = new SqlConnection(connectionString))
+                   {
+                       conn.Open();
+                       _logger.LogInformation("Connected to Azure SQL Database.");
+
+                       var query = "INSERT INTO Telemetry (DeviceID, Status, Timestamp) VALUES (@DeviceID, @Status, @Timestamp)";
+                       using (SqlCommand cmd = new SqlCommand(query, conn))
+                       {
+                           cmd.Parameters.AddWithValue("@DeviceID", deviceId);
+                           cmd.Parameters.AddWithValue("@Status", status ? 1 : 0);
+                           cmd.Parameters.AddWithValue("@Timestamp", timestamp);
+
+                           int rowsAffected = cmd.ExecuteNonQuery();
+                           _logger.LogInformation($"Inserted {rowsAffected} row(s) into Telemetry table.");
+                       }
+                   }
+
+                   return new OkObjectResult("Data saved successfully.");
+               }
+               catch (Exception ex)
+               {
+                   _logger.LogError($"Error inserting data: {ex.Message}");
+                   return new StatusCodeResult(500);
+               }
+           }
+       }
+   }
+   ```
 
 ---
 
