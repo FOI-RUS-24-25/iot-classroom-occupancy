@@ -1,18 +1,31 @@
+require('dotenv').config();
+
 const express = require('express');
 const sql = require('mssql');
 const server = express();
 const port = 4000;
 
 const dbConfig = {
-    user: 'iotadmin',
-    password: 'Rusiot2425',
-    server: 'rus-server.database.windows.net',
-    database: 'RUSdatabase',
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    server: process.env.DB_SERVER,
+    database: process.env.DB_NAME,
     options: {
         encrypt: true,
         enableArithAbort: true
     }
 };
+
+const poolPromise = new sql.ConnectionPool(dbConfig)
+    .connect()
+    .then(pool => {
+        console.log("Connected to SQL Server");
+        return pool;
+    })
+    .catch(err => {
+        console.error("Database connection failed! Error:", err);
+        process.exit(1); // Ako se ne uspije povezati, zaustavi aplikaciju
+    });
 
 server.use(express.urlencoded({ extended: true }));
 server.use(express.json());
@@ -20,48 +33,41 @@ server.use(express.static(__dirname));
 
 server.get('/api/last-status', async (req, res) => {
     try {
-        await sql.connect(dbConfig);
-        const result = await sql.query(`SELECT TOP 1 Status FROM Telemetry ORDER BY ID DESC`);
-
-        console.log("DB Result:", result.recordset); // Log podataka iz baze
-        if (result.recordset.length > 0) {
-            const status = result.recordset[0].Status;
-            console.log("Latest Status Value:", status); // Log zadnjeg statusa
-            res.json({ occupied: status });
-        } else {
-            res.json({ occupied: null });
-        }
+        const pool = await poolPromise;
+        const result = await pool.request().query(`SELECT TOP 1 Status FROM Telemetry ORDER BY ID DESC`);
+        
+        console.log("DB Result:", result.recordset);
+        res.json({ occupied: result.recordset[0]?.Status ?? null });
     } catch (error) {
-        console.error("Error fetching last status:", error);
-        res.status(500).json({ error: 'Error fetching last status' });
-    } finally {
-        sql.close();
+        console.error("Error fetching last status:", error); // Log cijele greške
+        res.status(500).json({ 
+            error: 'Error fetching last status', 
+            details: error.message // Dodaj detalje greške
+        });
     }
 });
 
 server.get('/api/last-occupied-time', async (req, res) => {
     try {
-        await sql.connect(dbConfig);
-        const result = await sql.query(`
+        const pool = await poolPromise;  // Koristi connection pool
+        const result = await pool.request().query(`
             SELECT TOP 1 CONVERT(VARCHAR, Timestamp, 126) AS LastOccupiedTimeUTC
             FROM Telemetry
             WHERE Status = 1
             ORDER BY Timestamp DESC
         `);
-
+        
         res.json({ lastOccupiedTime: result.recordset[0]?.LastOccupiedTimeUTC ?? null });
     } catch (error) {
         console.error("Error fetching last occupied time:", error);
         res.status(500).json({ error: 'Error fetching last occupied time' });
-    } finally {
-        sql.close();
     }
 });
 
 server.get('/api/peak-time', async (req, res) => {
     try {
-        await sql.connect(dbConfig);
-        const result = await sql.query(`
+        const pool = await poolPromise;
+        const result = await pool.request().query(`
             SELECT DATEPART(HOUR, Timestamp) AS Hour, COUNT(*) AS Count
             FROM Telemetry 
             WHERE Status = 0
@@ -70,16 +76,18 @@ server.get('/api/peak-time', async (req, res) => {
         `);
         res.json(result.recordset);
     } catch (error) {
-        res.status(500).json({ error: 'Error fetching peak time' });
-    } finally {
-        sql.close();
+        console.error("Error fetching peak time:", error);
+        res.status(500).json({ 
+            error: 'Error fetching peak time',
+            details: error.message
+        });
     }
 });
 
 server.get('/api/average-occupancy', async (req, res) => {
     try {
-        await sql.connect(dbConfig);
-        const result = await sql.query(`
+        const pool = await poolPromise;
+        const result = await pool.request().query(`
             WITH CTE AS (
                 SELECT 
                     t1.Timestamp AS StartTime,
@@ -96,10 +104,11 @@ server.get('/api/average-occupancy', async (req, res) => {
         `);
         res.json({ avg_time_seconds: result.recordset[0]?.AvgTimeSeconds ?? "N/A" });
     } catch (error) {
-        console.error("Error fetching occupancy duration:", error);
-        res.status(500).json({ error: 'Error fetching occupancy duration' });
-    } finally {
-        sql.close();
+        console.error("Error fetching average occupancy:", error);
+        res.status(500).json({ 
+            error: 'Error fetching average occupancy',
+            details: error.message
+        });
     }
 });
 
@@ -110,16 +119,18 @@ server.get('/api/daily-summary', async (req, res) => {
     }
 
     try {
-        await sql.connect(dbConfig);
-        
-        const result = await sql.query(`
+        const pool = await poolPromise;  // Koristi connection pool
+        const request = pool.request();
+        request.input('date', sql.Date, date);
+
+        const result = await request.query(`
             WITH Occupancy AS (
                 SELECT 
                     Timestamp,
                     Status,
                     LEAD(Timestamp) OVER (ORDER BY Timestamp) AS NextTimestamp
                 FROM Telemetry
-                WHERE CAST(Timestamp AS DATE) = '${date}'
+                WHERE CAST(Timestamp AS DATE) = @date
             )
             SELECT 
                 SUM(DATEDIFF(MINUTE, Timestamp, NextTimestamp)) AS TotalOccupiedMinutes
@@ -131,8 +142,6 @@ server.get('/api/daily-summary', async (req, res) => {
     } catch (error) {
         console.error("Error fetching daily summary:", error);
         res.status(500).json({ error: "Error fetching daily summary" });
-    } finally {
-        sql.close();
     }
 });
 
